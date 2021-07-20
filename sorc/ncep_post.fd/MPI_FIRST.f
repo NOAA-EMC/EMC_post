@@ -82,20 +82,28 @@
               pp10cb, ti
       use soil, only:  smc, stc, sh2o, sldpth, rtdpth, sllevel
       use masks, only: htm, vtm, hbm2, sm, sice, lmh, gdlat, gdlon, dx, dy, lmv
-      use ctlblk_mod, only: me, num_procs, jm, jsta, jend, jsta_m, jsta_m2,           &
+      use ctlblk_mod, only: me, num_procs, jm, jsta, jend, jsta_m, jsta_m2,ista,iend ,          &
               jend_m, jend_m2, iup, idn, icnt, im, idsp, jsta_2l, jend_2u,            &
               jvend_2u, lm, lp1, jsta_2l, jend_2u, nsoil, nbin_du, nbin_ss,           &
-              nbin_bc, nbin_oc, nbin_su
+              nbin_bc, nbin_oc, nbin_su,                                               &
+              ISTA_M,IEND_M,ISTA_M2,IEND_M2,                                          &
+              ISTA_2L, IEND_2U,IVEND_2U             
 
 !
 !     use params_mod
 !- - - - - - - - - - - - - - - - - - -  - - - - - - - - - - - - - - - - 
       implicit none
+     
 !
       include 'mpif.h'
 !
-      integer ierr,i,jsx,jex
+      integer ierr,i,jsx,jex,isx,iex
+      integer isumm
+      integer numx !number of subdomain in x direction
 !
+       isumm=0
+       numx=2
+
       if ( me == 0 ) then
 !        print *, ' NUM_PROCS = ',num_procs
       end if
@@ -116,19 +124,60 @@
 !
 !     global loop ranges
 !
-      call para_range(1,jm,num_procs,me,jsta,jend)
+!      call para_range(1,jm,num_procs,me,jsta,jend)
+! GWVX temporary documentation
+!  para_range2 supports a 2D decomposition.  The rest of the post
+!  supports 1D still and the call here is the special case where each
+!  processor gets all of the longitudes in the latitude 1D subdomain
+!  jsta:jend.  The X decomposition will be specified by the third
+!  argument (currently 1) and the Y decoposition will be specified by
+!  the fourth argument (currently all of the ranks)   When X is
+!  subdivided the third and fourth arguments will have to be integral
+!  factors of num_procs and on 5/27/21 I am still working out a general
+!  way to do this if the user doesn't select the factors
+     ! call para_range2(im,jm,1,num_procs,me,ista,iend,jsta,jend)
+      call para_range2(im,jm,numx,num_procs/numx,me,ista,iend,jsta,jend)
       jsta_m  = jsta
       jsta_m2 = jsta
       jend_m  = jend
       jend_m2 = jend
-      if ( me == 0 ) then
-         jsta_m  = 2
-         jsta_m2 = 3
+      ista_m  = ista
+      ista_m2 = ista
+      iend_m  = iend
+      iend_m2 = iend
+
+      if (me<numx)then
+        jsta_m=2
+        jsta_m2=3
       end if
-      if ( me == num_procs - 1 ) then
-         jend_m  = jm - 1
-         jend_m2 = jm - 2
+
+      if(mod(me,numx)==0)then
+        ista_m=2
+        ista_m2=3
       end if
+
+      if (me>=(num_procs-numx))then
+        jend_m=jm-1
+        jend_m2=jm-2
+      end if
+
+      if(mod(me+1,numx)==0)then
+        iend_m=im-1
+        iend_m2=im-2
+      end if
+
+!     if ( me == 0 ) then
+!        jsta_m  = 2
+!        jsta_m2 = 3
+!        ista_m  = 2
+!        ista_m2 = 3
+!     end if
+!     if ( me == num_procs - 1 ) then
+!        jend_m  = jm - 1
+!        jend_m2 = jm - 2
+!        iend_m  = im - 1
+!        iend_m2 = im - 2
+!     end if
 !
 !     neighbors
 !
@@ -149,9 +198,14 @@
 !     counts, disps for gatherv and scatterv
 !
       do i = 0, num_procs - 1
-         call para_range(1,jm,num_procs,i,jsx,jex) 
-         icnt(i) = (jex-jsx+1)*im
-         idsp(i) = (jsx-1)*im
+!         call para_range(1,jm,num_procs,i,jsx,jex) 
+         call para_range2(im,jm,numx,num_procs/numx,i,isx,iex,jsx,jex) 
+!         icnt(i) = (jex-jsx+1)*im
+         icnt(i) = (jex-jsx+1)*(iex-isx+1)
+         
+!         idsp(i) = (jsx-1)*im
+          idsp(i)=isumm
+          isumm=isumm+(jex-jsx+1)*(iex-isx+1)
          if ( me == 0 ) then
            print *, ' i, icnt(i),idsp(i) = ',i,icnt(i),      &
             idsp(i)
@@ -165,6 +219,9 @@
 ! special for c-grid v
       jvend_2u = min(jend + 2, jm+1 )
 ! special for c-grid v
+      ista_2l=max(ista-2,1)
+      iend_2u=min(iend+2,im)
+      ivend_2u = min(iend + 2, im+1 )
 !     print *, ' me, jvend_2u = ',me,jvend_2u
 !
 !     allocate arrays
@@ -175,5 +232,6 @@
       print *, ' me, jsta_2l, jend_2u = ',me,jsta_2l, jend_2u,  &
                'jvend_2u=',jvend_2u,'im=',im,'jm=',jm,'lm=',lm, &
                'lp1=',lp1
+      write(*,'(A,5I10)') 'MPI_FIRST me,jsta,jend,ista,iend,=',me,jsta,jend,ista,iend
 
       end
